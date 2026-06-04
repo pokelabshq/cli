@@ -1,0 +1,11 @@
+{
+  "name": "poke",
+  "version": "1.0.0",
+  "description": "Poke Labs CLI — interact with Council micro-services from your terminal",
+  "bin": { "poke": "./bin/poke.js" },
+  "type": "module",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/pokelabshq/cli.git" },
+  "engines": { "node": ">=18" },
+  "dependencies": {}
+}
