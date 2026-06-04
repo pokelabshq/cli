@@ -37,6 +37,7 @@ Commands:
   dns <domain>           Check DNS records
   colors <hex>           Generate color palette
   shorten <url>          Shorten a URL
+  barcode <text>         Generate barcode (Code39/Code128/EAN-13)
   health                 Check all service health
   services               List all available services
 
@@ -139,6 +140,23 @@ Examples:
         if (!url) { console.error("Usage: poke shorten <url>"); process.exit(1); }
         const r = await api("url", "/url/api/shorten", { url });
         console.log(`\n  🔗 Short URL: ${r.short_url || r.short || "N/A"}\n`);
+        break;
+      }
+      case "barcode": {
+        const text = args.slice(1).join(" ");
+        if (!text) { console.error("Usage: poke barcode <text> [--format code128|code39|ean13] [--output svg|json]"); process.exit(1); }
+        const fmtIdx = args.indexOf("--format");
+        const outIdx = args.indexOf("--output");
+        const fmt = fmtIdx !== -1 ? args[fmtIdx + 1] : "code128";
+        const out = outIdx !== -1 ? args[outIdx + 1] : "svg";
+        const r = await api("barcode", `/barcode/api/generate?data=${encodeURIComponent(text)}&format=${fmt}&output=${out}`);
+        if (out === "svg") {
+          const { writeFileSync } = await import("fs");
+          writeFileSync("barcode.svg", r);
+          console.log("\n  📊 Barcode saved to barcode.svg\n");
+        } else {
+          console.log(`\n  📊 ${fmt.toUpperCase()}: ${text} (${r.modules || "?"} modules)\n`);
+        }
         break;
       }
       case "health": {
