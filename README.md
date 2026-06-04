@@ -4,8 +4,21 @@
 
 ## Install
 
+**Option 1 — npm:**
 ```bash
 npm install -g poke
+```
+
+**Option 2 — Python (no npm needed):**
+```bash
+# Clone and use directly
+git clone https://github.com/pokelabshq/cli.git
+cd cli
+./bin/poke --help
+
+# Or copy to your PATH
+cp bin/poke /usr/local/bin/poke
+chmod +x /usr/local/bin/poke
 ```
 
 ## Quick Start

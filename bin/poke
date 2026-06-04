@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""poke — Poke Labs CLI. Interact with Council micro-services from your terminal."""
+import sys, json, urllib.request, urllib.parse, urllib.error, os
+
+COUNCIL = os.environ.get("COUNCIL_URL", "http://localhost:8700")
+VERSION = "1.1.0"
+
+def api(method, path, data=None):
+    url = f"{COUNCIL}{path}"
+    body = json.dumps(data).encode() if data else None
+    headers = {"Content-Type": "application/json"}
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+    except urllib.error.URLError as e:
+        print(f"\n  ❌ Error: {e}")
+        print(f"  Make sure Council gateway is running at {COUNCIL}\n")
+        sys.exit(1)
+
+def help():
+    print(f"""poke — Poke Labs CLI v{VERSION}
+
+Usage: poke <command> [options]
+
+Commands:
+  preview <url>          Extract link preview metadata
+  keywords <text>        Extract keywords from text
+  summarize <text>       Summarize text
+  sentiment <text>       Analyze sentiment of text
+  qr <text>              Generate QR code SVG
+  barcode <text>         Generate barcode (Code39/Code128/EAN-13)
+  dns <domain>           Check DNS records
+  colors <hex>           Generate color palette
+  shorten <url>          Shorten a URL
+  health                 Check all service health
+  services               List all available services
+
+Flags:
+  --format <type>        Barcode format: code128 (default), code39, ean13
+  --output <type>        Output type: svg (default), json
+  --save <file>          Save output to file
+
+Environment:
+  COUNCIL_URL  Base URL (default: http://localhost:8700)
+
+Examples:
+  poke preview https://github.com
+  poke sentiment "I love this product!"
+  poke barcode "Hello" --format code39 --save barcode.svg
+  poke qr "https://pokelabs.org" --save qr.svg
+""")
+
+def cmd_preview(url):
+    r = api("POST", "/link-preview/api/preview", {"url": url})
+    print(f"\n  🔗 {r.get('title', 'No title')}")
+    if r.get("description"): print(f"  {r['description'][:120]}")
+    if r.get("image"): print(f"  🖼️  {r['image']}")
+    print(f"  {r.get('site_name', '')}\n")
+
+def cmd_keywords(text):
+    r = api("POST", "/keyword/api/keywords", {"text": text})
+    print(f"\n  🔑 Keywords: {', '.join(r.get('keywords', []))}\n")
+
+def cmd_summarize(text):
+    r = api("POST", "/summarize/api/summarize", {"text": text})
+    print(f"\n  📝 {r.get('summary', 'No summary')}\n")
+
+def cmd_sentiment(text):
+    r = api("POST", "/sentiment/api/analyze", {"text": text})
+    s = r.get("sentiment", {})
+    label = s.get("label", r.get("label", "unknown"))
+    score = s.get("score", r.get("score", "?"))
+    emoji = {"positive": "😊", "negative": "😞", "neutral": "😐"}.get(label, "❓")
+    print(f"\n  {emoji} {label} (score: {score})")
+    if r.get("emotions"): print(f"  Emotions: {', '.join(r['emotions'])}")
+    print()
+
+def cmd_qr(text):
+    args = sys.argv[sys.argv.index("qr")+1:]
+    save_file = None
+    if "--save" in args:
+        idx = args.index("--save")
+        save_file = args[idx+1] if idx+1 < len(args) else "qr-code.svg"
+        args = args[:idx]
+    text = " ".join(a for a in a if not a.startswith("--"))
+    r = api("POST", "/qr/api/generate", {"text": text})
+    svg = r.get("svg", r.get("qr", ""))
+    if save_file and svg:
+        with open(save_file, "w") as f: f.write(svg)
+        print(f"\n  📱 QR code saved to {save_file}\n")
+    elif svg.startswith("<svg"):
+        save_file = save_file or "qr-code.svg"
+        with open(save_file, "w") as f: f.write(svg)
+        print(f"\n  📱 QR code saved to {save_file}\n")
+    else:
+        print(f"\n  📱 {json.dumps(r, indent=2)}\n")
+
+def cmd_barcode(text):
+    args = sys.argv[sys.argv.index("barcode")+1:]
+    fmt = "code128"
+    output = "svg"
+    save_file = None
+    i = 0
+    filtered = []
+    while i < len(args):
+        if args[i] == "--format" and i+1 < len(args): fmt = args[i+1]; i += 2
+        elif args[i] == "--output" and i+1 < len(args): output = args[i+1]; i += 2
+        elif args[i] == "--save" and i+1 < len(args): save_file = args[i+1]; i += 2
+        elif not args[i].startswith("--"): filtered.append(args[i]); i += 1
+        else: i += 1
+    text = " ".join(filtered)
+    r = api("GET", f"/barcode/api/generate?data={urllib.parse.quote(text)}&format={fmt}&output={output}")
+    if output == "svg":
+        svg = r if isinstance(r, str) and r.startswith("<svg") else r.get("svg", "")
+        save_file = save_file or "barcode.svg"
+        if svg:
+            with open(save_file, "w") as f: f.write(svg)
+            print(f"\n  📊 Barcode saved to {save_file}\n")
+        else:
+            print(f"\n  📊 {json.dumps(r, indent=2)}\n")
+    else:
+        print(f"\n  📊 {fmt.upper()}: {text}")
+        if "modules" in r: print(f"  Modules: {r['modules']}")
+        print()
+
+def cmd_dns(domain):
+    r = api("GET", f"/dns/api/check?domain={urllib.parse.quote(domain)}")
+    print(f"\n  🌐 DNS for {domain}:")
+    records = r.get("records", r)
+    for typ, vals in (records.items() if isinstance(records, dict) else []):
+        if isinstance(vals, list):
+            for v in vals: print(f"  {typ}: {v}")
+        else:
+            print(f"  {typ}: {vals}")
+    print()
+
+def cmd_colors(hex_color):
+    r = api("POST", "/color/api/palette", {"color": hex_color})
+    palette = r.get("palette", r.get("colors", []))
+    print(f"\n  🎨 Palette for {hex_color}:")
+    for i, c in enumerate(palette): print(f"  {i+1}. {c}")
+    print()
+
+def cmd_shorten(url):
+    r = api("POST", "/url/api/shorten", {"url": url})
+    print(f"\n  🔗 Short URL: {r.get('short_url', r.get('short', 'N/A'))}\n")
+
+def cmd_health():
+    print("\n  💓 Service Health:")
+    for svc in ["link-preview", "sentiment", "qr", "dns", "color", "url", "keyword", "summarize", "barcode"]:
+        try:
+            r = api("GET", f"/{svc}/api/health")
+            ok = r.get("ok", False)
+            ver = r.get("v", r.get("version", "?"))
+            print(f"  {'✅' if ok else '❌'} {svc} (v{ver})")
+        except SystemExit:
+            print(f"  ❌ {svc}")
+    print()
+
+def cmd_services():
+    print(f"""
+  Available Council Services:
+  ─────────────────────────────
+  🔗 link-preview   URL metadata extraction
+  🔑 keyword        Keyword extraction
+  📝 summarize      Text summarization
+  📱 qr             QR code generation
+  📊 barcode        Barcode generation (Code39/128/EAN-13)
+  🌐 dns            DNS record lookup
+  🎨 color          Color palette generation
+  🔗 url            URL shortener
+  🧠 sentiment      Sentiment analysis
+  ─────────────────────────────
+  Gateway: {COUNCIL}
+""")
+
+COMMANDS = {
+    "preview": cmd_preview, "keywords": cmd_keywords, "summarize": cmd_summarize,
+    "sentiment": cmd_sentiment, "qr": cmd_qr, "barcode": cmd_barcode,
+    "dns": cmd_dns, "colors": cmd_colors, "shorten": cmd_shorten,
+    "health": cmd_health, "services": cmd_services,
+}
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("--help", "-h"):
+        help(); sys.exit(0)
+    if args[0] in ("--version", "-v"):
+        print(f"poke v{VERSION}"); sys.exit(0)
+    cmd = args[0]
+    rest = " ".join(args[1:])
+    if cmd not in COMMANDS:
+        print(f"Unknown command: {cmd}. Run 'poke --help' for usage.")
+        sys.exit(1)
+    if cmd in ("health", "services"):
+        COMMANDS[cmd]()
+    else:
+        if not rest:
+            print(f"Usage: poke {cmd} <{'text' if cmd != 'dns' else 'domain'}>")
+            sys.exit(1)
+        COMMANDS[cmd](rest)
+
+if __name__ == "__main__":
+    main()
