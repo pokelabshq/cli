@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "poke-cli"
+version = "1.1.0"
+description = "Poke Labs Fleet Management CLI"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+[project.scripts]
+poke = "poke_cli.main:main"
