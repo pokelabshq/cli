@@ -1,143 +1,145 @@
 #!/usr/bin/env python3
-"""poke — Poke Labs CLI v1.0.0
-Usage: python3 poke <command> [args]
+"""Poke CLI v1.1 — Fleet management for Poke Labs agent infrastructure."""
 
-Commands:
-  status          Show status of all Poke Labs services
-  start <name>    Start a service (link-preview, site, poke-bot, discord, telegram, skills-hub, pricing, registry, billing)
-  stop <name>     Stop a service
-  restart <name>  Restart a service
-  preview <url>   Extract link preview metadata
-  repos           List pokelabshq repos
-  health          Health check all services
-  version         Show version
-"""
-import sys, json, socket, time, urllib.request, urllib.parse, subprocess, os, signal
+import sys, os, json, subprocess, argparse
+from datetime import datetime
 
-VERSION = "1.0.0"
+__version__ = "1.1.0"
+
 WALLET = "0xca3d86e4EDE205E6d72496BC2919c88b994B6beF"
+CREATOR = "0xb618679b989ed4f3dF32aA63daD525e680461dfe"
+SERVICES_DIR = "/home/alx/services"
 
-SERVICES = {
-    "link-preview": {"port": 8765, "file": "/home/alx/services/link-preview/server.py"},
-    "site":         {"port": 8766, "file": "/home/alx/services/pokelabs-site/server.py"},
-    "poke-bot":     {"port": 8770, "file": "/home/alx/services/poke-bot/bot.py"},
-    "discord":      {"port": 8775, "file": "/home/alx/services/discord-bot/bot.py"},
-    "telegram":     {"port": 8777, "file": "/home/alx/services/telegram-bot/bot.py"},
-    "skills-hub":   {"port": 8780, "file": "/home/alx/services/skills-hub/server.py"},
-    "pricing":      {"port": 8790, "file": "/home/alx/services/pricing/server.py"},
-    "registry":     {"port": 8785, "file": "/home/alx/services/registry/server.py"},
-    "billing":      {"port": 8795, "file": "/home/alx/services/billing/server.py"},
-}
+def cmd_status(args):
+    """Show Poke Labs status."""
+    print(f"🫧 Poke Labs v{__version__}")
+    print(f"   Wallet: {WALLET}")
+    print(f"   Creator: {CREATOR}")
+    print(f"   Chain: Base")
+    print(f"   Status: Awaiting funding")
+    if os.path.isdir(SERVICES_DIR):
+        dirs = [d for d in os.listdir(SERVICES_DIR) if os.path.isdir(os.path.join(SERVICES_DIR, d))]
+        print(f"   Services: {len(dirs)} on disk")
 
-def port_open(port):
-    try:
-        s = socket.socket(); s.settimeout(1); s.connect(("127.0.0.1", port)); s.close(); return True
-    except: return False
+def cmd_services(args):
+    """List all services."""
+    if not os.path.isdir(SERVICES_DIR):
+        print("Services directory not found.")
+        return
+    dirs = sorted([d for d in os.listdir(SERVICES_DIR) if os.path.isdir(os.path.join(SERVICES_DIR, d))])
+    print(f"📦 {len(dirs)} services:")
+    for d in dirs:
+        has_server = os.path.exists(os.path.join(SERVICES_DIR, d, "server.py"))
+        marker = "🌐" if has_server else "📁"
+        print(f"   {marker} {d}")
 
-def http_get(path, port, timeout=3):
-    try:
-        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=timeout)
-        return json.loads(resp.read())
-    except: return None
+def cmd_start(args):
+    """Start a service."""
+    service = args.name
+    path = os.path.join(SERVICES_DIR, service, "server.py")
+    if not os.path.exists(path):
+        print(f"❌ Service '{service}' not found or has no server.py")
+        return
+    subprocess.Popen(["python3", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(f"✅ Started {service}")
 
-def cmd_status():
-    print(f"🐾 Poke Labs Services — {time.strftime('%Y-%m-%d %H:%M UTC')}")
-    print(f"Wallet: {WALLET}")
-    print()
-    for name, svc in SERVICES.items():
-        up = port_open(svc["port"])
-        icon = "✅" if up else "❌"
-        health = http_get("/api/health", svc["port"]) if up else None
-        ver = health.get("v", "?") if health else "—"
-        print(f"  {icon} {name:<14} :{svc['port']}  v{ver}")
-    up_count = sum(1 for s in SERVICES.values() if port_open(s["port"]))
-    print(f"\n{up_count}/{len(SERVICES)} services online")
-
-def cmd_start(name):
-    if name not in SERVICES:
-        print(f"Unknown service: {name}. Available: {', '.join(SERVICES.keys())}"); sys.exit(1)
-    svc = SERVICES[name]
-    if port_open(svc["port"]):
-        print(f"{name} already running on :{svc['port']}"); return
-    if not os.path.exists(svc["file"]):
-        print(f"Service file not found: {svc['file']}"); sys.exit(1)
-    subprocess.Popen(["python3", svc["file"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(2)
-    if port_open(svc["port"]):
-        print(f"✅ {name} started on :{svc['port']}")
+def cmd_stop(args):
+    """Stop a service by name/pattern."""
+    service = args.name
+    result = subprocess.run(["pkill", "-f", f"{service}/server.py"], capture_output=True)
+    if result.returncode == 0:
+        print(f"🛑 Stopped {service}")
     else:
-        print(f"⚠️ {name} may not have started. Check logs.")
+        print(f"⚠️  {service} was not running")
 
-def cmd_stop(name):
-    if name not in SERVICES:
-        print(f"Unknown service: {name}"); sys.exit(1)
-    port = SERVICES[name]["port"]
-    os.system(f"fuser -k {port}/tcp 2>/dev/null")
-    time.sleep(1)
-    print(f"🛑 {name} stopped")
+def cmd_deploy(args):
+    """Deploy all services."""
+    if not os.path.isdir(SERVICES_DIR):
+        print("Services directory not found.")
+        return
+    started = 0
+    for d in sorted(os.listdir(SERVICES_DIR)):
+        path = os.path.join(SERVICES_DIR, d, "server.py")
+        if os.path.exists(path):
+            subprocess.Popen(["python3", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            started += 1
+    print(f"🚀 Deployed {started} services")
 
-def cmd_restart(name):
-    cmd_stop(name)
-    cmd_start(name)
+def cmd_wallet(args):
+    """Show wallet info."""
+    print(f"💰 Poke Labs Wallet")
+    print(f"   Address: {WALLET}")
+    print(f"   Chain: Base")
+    print(f"   Token: USDC")
+    print(f"")
+    print(f"   To fund: Send USDC on Base to the address above")
+    print(f"   $5 USDC → ~10 hours of operation")
 
-def cmd_preview(url):
+def cmd_repos(args):
+    """List GitHub repos."""
+    repos = [
+        ("cli", "Poke CLI — Fleet management tool"),
+        ("services", "77 zero-dependency microservices"),
+        ("council", "AI Council automation"),
+        ("awesome-ai-agents", "Curated AI agent resources"),
+    ]
+    print(f"📂 {len(repos)} GitHub repos:")
+    for name, desc in repos:
+        print(f"   • pokelabshq/{name} — {desc}")
+
+def cmd_health(args):
+    """Check service health."""
+    import urllib.request
+    port = args.port
     try:
-        data = json.dumps({"url": url}).encode()
-        req = urllib.request.Request("http://127.0.0.1:8765/api/preview", data=data,
-                                     headers={"Content-Type": "application/json"})
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read())
-        print(json.dumps(result, indent=2))
-    except Exception as e:
-        print(f"Error: {e}")
-        print("Is link-preview running? Try: poke start link-preview")
+        resp = urllib.request.urlopen(f"http://localhost:{port}/api/health", timeout=3)
+        data = json.loads(resp.read())
+        print(f"✅ Port {port}: OK (v{data.get('v', '?')})")
+    except:
+        print(f"❌ Port {port}: DOWN")
 
-def cmd_repos():
-    try:
-        req = urllib.request.Request(
-            "https://api.github.com/users/pokelabshq/repos?per_page=20&sort=updated",
-            headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "PokeCLI/1.0"}
-        )
-        repos = json.loads(urllib.request.urlopen(req, timeout=5).read())
-        for r in repos:
-            lang = r.get("primaryLanguage", {}).get("name", "—") if r.get("primaryLanguage") else "—"
-            print(f"  {r['name']:<25} {lang:<12} ⭐{r.get('stargazerCount',0)}  {r.get('updatedAt','')[:10]}")
-    except Exception as e:
-        print(f"GitHub API error: {e}")
-
-def cmd_health():
-    all_ok = True
-    for name, svc in SERVICES.items():
-        h = http_get("/api/health", svc["port"])
-        if h:
-            print(f"  ✅ {name}: {h}")
-        else:
-            print(f"  ❌ {name}: unreachable")
-            all_ok = False
-    sys.exit(0 if all_ok else 1)
-
-def cmd_version():
-    print(f"poke v{VERSION} — Poke Labs CLI")
-    print(f"Python {sys.version.split()[0]}")
-    print("MIT License — pokelabs.org")
-
-COMMANDS = {
-    "status": cmd_status, "start": cmd_start, "stop": cmd_stop,
-    "restart": cmd_restart, "preview": cmd_preview, "repos": cmd_repos,
-    "health": cmd_health, "version": cmd_version,
-}
+def cmd_version(args):
+    print(f"Poke CLI v{__version__}")
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
-        print(__doc__); sys.exit(0)
-    cmd = sys.argv[1]
-    if cmd not in COMMANDS:
-        print(f"Unknown command: {cmd}. Run 'poke help' for usage."); sys.exit(1)
-    if cmd in ("start", "stop", "restart") and len(sys.argv) < 3:
-        print(f"Usage: poke {cmd} <service-name>"); sys.exit(1)
-    if cmd == "preview" and len(sys.argv) < 3:
-        print("Usage: poke preview <url>"); sys.exit(1)
-    COMMANDS[cmd]() if cmd not in ("start","stop","restart","preview") else COMMANDS[cmd](sys.argv[2])
+    parser = argparse.ArgumentParser(prog="poke", description="🫧 Poke Labs CLI")
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("status", help="Show status")
+    sub.add_parser("services", help="List services")
+    
+    p_start = sub.add_parser("start", help="Start a service")
+    p_start.add_argument("name", help="Service name")
+    
+    p_stop = sub.add_parser("stop", help="Stop a service")
+    p_stop.add_argument("name", help="Service name")
+    
+    sub.add_parser("deploy", help="Deploy all services")
+    sub.add_parser("wallet", help="Show wallet info")
+    sub.add_parser("repos", help="List GitHub repos")
+    
+    p_health = sub.add_parser("health", help="Check service health")
+    p_health.add_argument("--port", type=int, default=8765)
+    
+    sub.add_parser("version", help="Show version")
+
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        return
+
+    commands = {
+        "status": cmd_status, "services": cmd_services,
+        "start": cmd_start, "stop": cmd_stop,
+        "deploy": cmd_deploy, "wallet": cmd_wallet,
+        "repos": cmd_repos, "health": cmd_health,
+        "version": cmd_version,
+    }
+    handler = commands.get(args.command)
+    if handler:
+        handler(args)
+    else:
+        parser.print_help()
 
 if __name__ == "__main__":
     main()
